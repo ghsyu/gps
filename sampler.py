@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 
 import numpy as n
-import multiprocessing as mp
+import threading as mp
 import struct
 import time
 import socket
+import Queue
 #Imports katcp_wrapper only if GpsSampler is instantiated
 
 class MockFpgaClient(object):
@@ -49,23 +50,24 @@ class GpsSampler(object):
     def set_decimation(self, decimation):
         self.fpga.write_int('throttle_ctrl', decimation)
     
-    def grab_data(self, conn, addr_max=2 ** 11):
-        BRAM1 = True
+    def grab_data(self, q, addr_max=2 ** 11):
+        BRAM = True
         while True:
             current = self.fpga.read_int('current_address')
             if BRAM and current:
-                conn.send(self.fpga.read('Shared_BRAM', 4*(addr_max)))
+                q.put(self.fpga.read('Shared_BRAM', 4*(addr_max)))
                 BRAM = False
             elif not(BRAM or current):
-                conn.send(self.fpga.read('Shared_BRAM1', 4*(addr_max)))
+                q.put(self.fpga.read('Shared_BRAM1', 4*(addr_max)))
                 BRAM = True
                 
     
     def sampler(self, samplerate, bram_size = 2**11, maxtime=None):
         self.start()
         time.sleep(1)
-        recv_conn, send_conn = mp.Pipe(duplex=False)
-        grab = mp.Process(target=self.grab_data, args=(send_conn))
+        q = Queue.Queue()
+        grab = mp.Thread(target=self.grab_data, args=(q,))
+        grab.daemon = True
         start = time.time()
         total_len = 0
         raw = []
@@ -74,14 +76,13 @@ class GpsSampler(object):
             grab.start()
             f.write('Sample rate = {0}\n'.format(samplerate))
             while maxtime == None or (time.time() - start) < maxtime:
-                x = recv_conn.recv()
-                data = struct.unpack('{0}>i'.format(bram_size//4), x)
-                f.write(x)
+                x = q.get()
+                data = struct.unpack('>{0}I'.format(bram_size), x)
+                f.write(data)
         except KeyboardInterrupt:
             print('Keyboard interrupt caught, stopping...')
         finally:
             f.close()
-            grab.terminate()
     
     
 
@@ -125,7 +126,7 @@ class NoKatcpRx(object):
             f.write('Sample rate = {0}\n'.format(self.samplerate))
             while maxtime == None or (time.time() - start) < maxtime:
                 x = self.recv(8192)
-                data = struct.unpack('{0}>i'.format(self.bram_size//4), x)
+                data = struct.unpack('>{0}I'.format(bram_size), x)
                 f.write(x)
         except KeyboardInterrupt:
             print('Keyboard interrupt caught, stopping...')
