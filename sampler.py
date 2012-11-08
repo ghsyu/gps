@@ -43,7 +43,7 @@ class GpsSampler(object):
         self.fpga.progdev(boffile)
         time.sleep(2)
     
-    def start(self):
+    def setup(self):
         self.fpga.write_int('throttle_ctrl', self.decimation)
         self.fpga.write_int('enable',1)
     
@@ -62,8 +62,8 @@ class GpsSampler(object):
                 BRAM = True
                 
     
-    def sampler(self, samplerate, bram_size = 2**11, maxtime=None):
-        self.start()
+    def start(self, samplerate, bram_size = 2**11, maxtime=None, raw_output = False, filename = 'gps_frequencies'):
+        self.setup()
         time.sleep(1)
         q = Queue.Queue()
         grab = mp.Thread(target=self.grab_data, args=(q,))
@@ -72,13 +72,17 @@ class GpsSampler(object):
         total_len = 0
         raw = []
         try:
-            f = open('gps_frequencies', 'w')
+            f = open(filename, 'w')
             grab.start()
             f.write('Sample rate = {0}\n'.format(samplerate))
             while maxtime == None or (time.time() - start) < maxtime:
                 x = q.get()
-                data = struct.unpack('>{0}I'.format(bram_size), x)
-                f.write(data)
+                if raw_output:
+                    f.write(x)
+                else:
+                    data = struct.unpack('>{0}I'.format(bram_size), x)
+                    output = '\n'.join((str(i) for i in data))
+                    f.write(output+'\n')
         except KeyboardInterrupt:
             print('Keyboard interrupt caught, stopping...')
         finally:
