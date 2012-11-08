@@ -31,37 +31,47 @@ class GpsSampler(object):
     '''
     
     '''
-    def __init__(self, hostname, boffile, decimation):
+    def __init__(self, hostname, decimation):
         from corr import katcp_wrapper as kw
-        self.fpga = kw.FpgaClient(hostname, 7147)
+        self.fpga = kw.FpgaClient(hostname)
+        time.sleep(1)
+        self.decimation = decimation
+        self.fpga.status()
+        
+    def progdev(self, boffile):
         self.fpga.progdev(boffile)
-        self.fpga.write_int('throttle_ctrl', decimation)
+        time.sleep(2)
+    
+    def start(self):
+        self.fpga.write_int('throttle_ctrl', self.decimation)
         self.fpga.write_int('enable',1)
     
     def set_decimation(self, decimation):
         self.fpga.write_int('throttle_ctrl', decimation)
     
-    def grab_data(self, conn, addr_max=2 ** 11 - 1):
+    def grab_data(self, conn, addr_max=2 ** 11):
         BRAM1 = True
         while True:
-            current = int(self.fpga.read_int('current_address'))
+            current = self.fpga.read_int('current_address')
             if BRAM and current:
-                conn.send(self.fpga.read('Shared BRAM', 4*(addr_max)))
+                conn.send(self.fpga.read('Shared_BRAM', 4*(addr_max)))
                 BRAM = False
             elif not(BRAM or current):
-                conn.send(self.fpga.read('Shared BRAM1', 4*(addr_max)))
+                conn.send(self.fpga.read('Shared_BRAM1', 4*(addr_max)))
                 BRAM = True
                 
     
     def sampler(self, samplerate, bram_size = 2**11, maxtime=None):
-        send_conn, recv_conn = mp.Pipe(duplex=False)
-        grab = mp.Process(target=self.grab_data, args=(self.fpga, send_conn))
+        self.start()
+        time.sleep(1)
+        recv_conn, send_conn = mp.Pipe(duplex=False)
+        grab = mp.Process(target=self.grab_data, args=(send_conn))
         start = time.time()
         total_len = 0
         raw = []
-        try:  
-            grab.start()
+        try:
             f = open('gps_frequencies', 'w')
+            grab.start()
             f.write('Sample rate = {0}\n'.format(samplerate))
             while maxtime == None or (time.time() - start) < maxtime:
                 x = recv_conn.recv()
@@ -71,7 +81,7 @@ class GpsSampler(object):
             print('Keyboard interrupt caught, stopping...')
         finally:
             f.close()
-            grab.close()
+            grab.terminate()
     
     
 
@@ -82,10 +92,10 @@ class NoKatcpTx(GpsSampler):
     '''
     def __init__(self, boffile, decimation, address = '192.168.1.100', port = 8888):
         import subprocess
-        proc = subprocess.Popen['%s%s'%('/boffiles/',boffile)]
+        proc = subprocess.Popen(['%s%s'%('/boffiles/',boffile)])
         self.dir = '/proc/%d/hw/ioreg'%(proc.pid)
-        self.sock = socket.socket(AF_INET, SOCK_DGRAM)
-        sock.connect((address, port))
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.connect((address, port))
         self.fpga = MockFpgaClient(self.dir)
         
     def set_decimation(self, decimation):
@@ -99,9 +109,9 @@ class NoKatcpRx(object):
     A version of GpsSampler for use when katcp is not available.
     This end runs on the CPU
     '''
-    def __init__(self, samplerate, hostname, port = 8888, bram_size = 2**11):
-        self.sock = socket.socket(AF_INET, SOCK_DGRAM)
-        self.sock.bind('', port)
+    def __init__(self, samplerate, port = 8888, bram_size = 2**11):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind(('', port))
         self.samplerate = samplerate
         self.bram_size = bram_size
     def start(self, maxtime = None):
@@ -122,4 +132,3 @@ class NoKatcpRx(object):
         finally:
             f.close()
             grab.close()
-    
