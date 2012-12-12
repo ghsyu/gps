@@ -23,6 +23,7 @@ class GpsSampler(object):
         self.fpga.status()
         
     def setup(self):
+        self.fpga.write_int('enable',0)
         self.fpga.write_int('throttle_ctrl', self.decimation)
         self.fpga.write_int('enable',1)
     
@@ -54,13 +55,14 @@ class GpsSampler(object):
             f = open(filename, 'w')
             grab.start()
             while maxtime == None or (time.time() - start) < maxtime:
-                x = q.get()
-                if raw_output:
-                    f.write(x)
-                else:
-                    data = struct.unpack('>{0}i'.format(bram_size), x)
-                    output = '\n'.join((str(i) for i in data))
-                    f.write(output+'\n')
+                if not q.empty():
+                    x = q.get(timeout = 1)
+                    if raw_output:
+                        f.write(x)
+                    else:
+                        data = struct.unpack('>{0}i'.format(bram_size), x)
+                        output = '\n'.join((str(i) for i in data))
+                        f.write(output+'\n')
         except KeyboardInterrupt:
             print('Keyboard interrupt caught, stopping...')
         finally:
@@ -72,7 +74,7 @@ if __name__ == '__main__':
     parser.add_argument('--d', type = int, default = 2000, help = 'How much the filter decimates by.')
     parser.add_argument('--t', type = int, default = 6000, help = 'how long to take data')
     args = parser.parse_args()
-    A = GpsSampler('pf12', args.d/20)
+    A = GpsSampler('169.254.7.1', args.d/20)
     A.setup()
     time.sleep(.5)
     A.start(args.f, maxtime = args.t)
